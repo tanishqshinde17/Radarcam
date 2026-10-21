@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-import { Settings, ShieldAlert, Zap, Radio } from 'lucide-react';
+import { Settings, ShieldAlert, Zap, Radio, Play, Pause } from 'lucide-react';
 import type { AppSettings, SpeedCamera, UserLocation, ProximityAlert } from './types';
 import { generateNearbyCameras, generateInitialHazards, calculateDistanceMeters, formatDistance, formatSpeed } from './services/radarData';
 import { soundService } from './services/soundService';
@@ -41,8 +41,8 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeAlerts, setActiveAlerts] = useState<ProximityAlert[]>([]);
 
-  // Simulation mode
-  const [isSimulating] = useState(true);
+  // Simulation mode toggle (default false so speed stays constant at 0 when not moving)
+  const [isSimulating, setIsSimulating] = useState(false);
 
   // Initialize data
   useEffect(() => {
@@ -74,18 +74,44 @@ const App: React.FC = () => {
     setActiveAlerts(alerts);
   }, [location, cameras, settings]);
 
-  // Simulate movement
+  // Geolocation or Simulation movement
   useEffect(() => {
-    if (!isSimulating) return;
-    const interval = setInterval(() => {
-      setLocation(prev => ({
-        ...prev,
-        lat: prev.lat + (Math.random() - 0.5) * 0.0001,
-        lng: prev.lng + (Math.random() - 0.5) * 0.0001,
-        speed: Math.floor(Math.random() * 110)
-      }));
-    }, 2000);
-    return () => clearInterval(interval);
+    if (isSimulating) {
+      const interval = setInterval(() => {
+        setLocation(prev => ({
+          ...prev,
+          lat: prev.lat + 0.00002,
+          lng: prev.lng + 0.00002,
+          speed: 60 // Constant stable test speed when simulating
+        }));
+      }, 2000);
+      return () => clearInterval(interval);
+    } else {
+      if (!('geolocation' in navigator)) {
+        console.warn('Geolocation not supported');
+        return;
+      }
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const speedKmh = pos.coords.speed !== null ? pos.coords.speed * 3.6 : 0;
+          setLocation({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            speed: Math.max(0, speedKmh),
+            heading: pos.coords.heading,
+            accuracy: pos.coords.accuracy,
+            altitude: pos.coords.altitude
+          });
+        },
+        (err) => {
+          console.warn('Geolocation error or permission denied:', err);
+          // Keep location static with 0 speed when stationary or GPS unavailable
+          setLocation(prev => ({ ...prev, speed: 0 }));
+        },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
+      );
+      return () => navigator.geolocation.clearWatch(watchId);
+    }
   }, [isSimulating]);
 
   return (
@@ -96,7 +122,17 @@ const App: React.FC = () => {
           <Radio className="w-6 h-6 animate-pulse" />
           <span className="font-bold text-lg tracking-tight text-white">Pulse<span className="text-indigo-400">Nav</span></span>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-3">
+           <button
+             onClick={() => setIsSimulating(!isSimulating)}
+             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
+               isSimulating ? 'bg-amber-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+             }`}
+             title="Toggle simulation mode for testing"
+           >
+             {isSimulating ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+             <span>{isSimulating ? 'Simulating' : 'Real GPS'}</span>
+           </button>
            <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition">
              <Settings className="w-5 h-5 text-gray-300" />
            </button>
@@ -111,7 +147,7 @@ const App: React.FC = () => {
         />
         {/* User */}
         <Marker position={[location.lat, location.lng]}>
-          <Popup>Current Location</Popup>
+          <Popup>Current Location (Speed: {Math.round(location.speed)} km/h)</Popup>
         </Marker>
         {/* Cameras */}
         {cameras.filter(c => (settings.filterFixed && c.type === 'fixed') || (settings.filterMobile && c.type === 'mobile')).map(cam => (
