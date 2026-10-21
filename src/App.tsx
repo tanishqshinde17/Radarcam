@@ -106,7 +106,7 @@ const App: React.FC = () => {
       {/* Main Map */}
       <MapContainer center={[location.lat, location.lng]} zoom={14} className="flex-grow">
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" // Dark theme tile
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         />
         {/* User */}
