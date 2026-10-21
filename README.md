@@ -1,32 +1,39 @@
-# React + TypeScript + Vite
+# PulseNav — Real-Time Speed Camera & Hazard Navigation App
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+PulseNav is a modern, high-performance, 100% free speed camera detector and GPS navigation web application designed for drivers. Inspired by popular navigation tools like Radarbot, PulseNav provides real-time speed camera alerts, road hazard reporting, and live speedometer tracking with absolute privacy and zero subscription fees.
 
-Currently, two official plugins are available:
+## Key Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Real-Time Speed Camera Detection**: Alerts drivers for fixed speed cameras, mobile radar traps, red-light cameras, average speed zones, and tunnel cameras.
+- **Constant & Accurate Speedometer**: Real-time speed tracking via device GPS or simulation mode. Speed remains constant at 0 km/h when stationary.
+- **Proximity Audio & Voice Alerts**: Audible warning chimes and synthesized voice alerts as you approach speed cameras or hazardous road zones.
+- **Community Road Hazard Reporting**: Crowdsourced reporting interface to broadcast police checkpoints, hidden speed traps, accidents, and road debris instantly.
+- **Dark Mode Optimized Map**: High-performance Leaflet & OpenStreetMap integration with a custom dark-mode tile filter for comfortable night driving.
+- **Fully Customizable Settings**: Toggle audio alerts, voice guidance, detection warning radiuses (300m - 2000m), and specific camera filters.
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Frontend**: React 19, TypeScript, Vite
+- **Styling**: Tailwind CSS v4
+- **Mapping**: React-Leaflet, Leaflet.js, OpenStreetMap
+- **Audio & Speech**: HTML5 Web Audio API & Web Speech Synthesis API
 
-## Expanding the Oxlint configuration
+## Getting Started
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/tanishqshinde17/Radarcam.git
+   cd Radarcam
+   ```
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+3. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+4. Open [http://localhost:5173](http://localhost:5173) in your browser.
