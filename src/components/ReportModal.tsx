@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { CameraType, HazardType } from '../types';
 import { Camera, TriangleAlert } from 'lucide-react';
 import { Modal } from './Modal';
+import { Segmented } from './Segmented';
 import { fieldLabel, choiceClass, primaryButton } from './styles';
 
 interface ReportModalProps {
@@ -65,24 +66,17 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         </button>
       }
     >
-      {/* Tabs */}
-      <div className="grid grid-cols-2 gap-1 p-1 mb-5 rounded-xl bg-white/[0.04]">
-        {([
-          { id: 'camera', label: 'Speed camera', Icon: Camera },
-          { id: 'hazard', label: 'Road hazard', Icon: TriangleAlert }
-        ] as const).map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`h-9 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
-              tab === id ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Icon className="w-4 h-4" />
-            {label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        ariaLabel="Report type"
+        value={tab}
+        onChange={setTab}
+        className="mb-5 rounded-xl bg-white/[0.04]"
+        buttonClass="h-9 text-sm font-medium"
+        options={[
+          { value: 'camera', label: <><Camera className="w-4 h-4" />Speed camera</> },
+          { value: 'hazard', label: <><TriangleAlert className="w-4 h-4" />Road hazard</> }
+        ]}
+      />
 
       {tab === 'camera' ? (
         <div className="space-y-5">
@@ -104,7 +98,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   key={limit}
                   type="button"
                   onClick={() => setSpeedLimit(limit)}
-                  className={`aspect-square rounded-full text-sm font-bold tabular-nums transition ${
+                  className={`press aspect-square rounded-full text-sm font-bold tabular-nums ${
                     speedLimit === limit
                       ? 'bg-white text-gray-900 ring-4 ring-red-500'
                       : 'bg-white/[0.04] text-gray-400 hover:text-white ring-1 ring-white/10'

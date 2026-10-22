@@ -3,6 +3,13 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Motion tokens: strong curves (Tailwind's built-ins are too weak) */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --default-transition-duration: 160ms;
+  --default-transition-timing-function: ease;
 }
 
 html,
@@ -115,32 +122,171 @@ body {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
-/* Lightweight enter animations */
+/* ---------- Motion ---------- */
+
+/* Press feedback for any pressable element */
+.press {
+  transition-property: transform, color, background-color, border-color, box-shadow;
+  transition-duration: 160ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.press:active {
+  transform: scale(0.97);
+}
+
+/* Sliding indicator for two-option switches */
+.segmented-indicator {
+  transition:
+    transform 250ms var(--ease-in-out),
+    background-color 250ms ease;
+}
+
+.segmented-indicator[data-second="true"] {
+  transform: translateX(100%);
+}
+
+/* Switch thumb */
+.switch-thumb {
+  transition: transform 200ms var(--ease-out);
+}
+
+.switch-thumb[data-on="true"] {
+  transform: translateX(20px);
+}
+
+/* First-paint entrance for the floating UI, staggered */
+@keyframes enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.enter-down,
+.enter-up {
+  animation: enter-down 400ms var(--ease-out) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.enter-up {
+  animation-name: enter-up;
+}
+
+/* Modal: bottom sheet on phones, centered dialog on larger screens */
+.modal-backdrop {
+  transition: opacity 250ms var(--ease-out);
+}
+
+.modal-backdrop[data-state="closed"] {
+  opacity: 0;
+}
+
+.modal-panel {
+  transition: transform 420ms var(--ease-drawer);
+}
+
+.modal-panel[data-state="closed"] {
+  transform: translateY(100%);
+}
+
+@media (min-width: 640px) {
+  .modal-panel {
+    transform-origin: center;
+    transition:
+      opacity 250ms var(--ease-out),
+      transform 250ms var(--ease-out);
+  }
+
+  .modal-panel[data-state="closed"] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Alert card and toast: enter and leave through the bottom */
+.slide-up {
+  transition:
+    opacity 250ms var(--ease-out),
+    transform 250ms var(--ease-out),
+    background-color 200ms ease,
+    border-color 200ms ease;
+}
+
+.slide-up[data-state="closed"] {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.toast {
+  transition:
+    opacity 400ms ease,
+    transform 400ms ease;
+}
+
+.toast[data-state="closed"] {
+  opacity: 0;
+  transform: translateY(100%);
+}
+
+/* Speed limit sign pops in from its own center */
+.pop {
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+.pop[data-state="closed"] {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+/* Reduced motion: keep fades, drop movement */
+@media (prefers-reduced-motion: reduce) {
+  .user-dot::after {
+    animation: none;
+  }
+
+  .enter-down,
+  .enter-up {
+    animation: fade-in 200ms ease both;
+  }
+
+  .press:active {
+    transform: none;
+  }
+
+  .segmented-indicator,
+  .switch-thumb {
+    transition-duration: 0ms;
+  }
+
+  .modal-panel,
+  .modal-panel[data-state="closed"],
+  .slide-up[data-state="closed"],
+  .toast[data-state="closed"],
+  .pop[data-state="closed"] {
+    transform: none;
+  }
+
+  .modal-panel {
+    transition: opacity 200ms ease;
+  }
+
+  .modal-panel[data-state="closed"] {
+    opacity: 0;
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
-  }
-}
-
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-}
-
-.anim-fade {
-  animation: fade-in 150ms ease-out;
-}
-
-.anim-rise {
-  animation: rise-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .user-dot::after,
-  .anim-fade,
-  .anim-rise {
-    animation: none;
   }
 }

@@ -3,6 +3,7 @@ import type { AppSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { Volume2 } from 'lucide-react';
 import { Modal } from './Modal';
+import { Segmented } from './Segmented';
 import { choiceClass, primaryButton } from './styles';
 
 interface SettingsModalProps {
@@ -45,9 +46,9 @@ const Toggle: React.FC<{ checked: boolean; onChange: () => void; label: string }
     aria-checked={checked}
     aria-label={label}
     onClick={onChange}
-    className={`relative w-11 h-6 shrink-0 rounded-full transition-colors ${checked ? 'bg-blue-500' : 'bg-white/15'}`}
+    className={`relative w-11 h-6 shrink-0 rounded-full transition-colors duration-200 ${checked ? 'bg-blue-500' : 'bg-white/15'}`}
   >
-    <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
+    <span data-on={checked} className="switch-thumb absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow" />
   </button>
 );
 
@@ -90,7 +91,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <button
               type="button"
               onClick={testAudio}
-              className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-blue-400 hover:text-blue-300 hover:bg-white/[0.02] transition-colors"
+              className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-blue-400 hover:text-blue-300 hover:bg-white/[0.02] transition-colors rounded-b-xl"
             >
               <Volume2 className="w-4 h-4" />
               Play test alert
@@ -102,19 +103,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="rounded-xl border border-white/[0.07] divide-y divide-white/[0.06]">
             <div className="flex items-center justify-between px-4 py-3">
               <span className="text-sm font-medium text-white">Speed unit</span>
-              <div className="flex rounded-lg p-0.5 bg-white/[0.06]">
-                {(['kmh', 'mph'] as const).map(unit => (
-                  <button
-                    key={unit}
-                    onClick={() => onUpdateSettings({ speedUnit: unit })}
-                    className={`px-3 h-7 text-xs font-semibold rounded-md transition-colors ${
-                      settings.speedUnit === unit ? 'bg-white/15 text-white' : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {unit === 'kmh' ? 'km/h' : 'mph'}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                ariaLabel="Speed unit"
+                value={settings.speedUnit}
+                onChange={(unit) => onUpdateSettings({ speedUnit: unit })}
+                className="w-32 h-9 rounded-lg bg-white/[0.06]"
+                buttonClass="text-xs font-semibold"
+                options={[
+                  { value: 'kmh', label: 'km/h' },
+                  { value: 'mph', label: 'mph' }
+                ]}
+              />
             </div>
             <div className="px-4 py-3">
               <div className="flex justify-between text-sm mb-2">
