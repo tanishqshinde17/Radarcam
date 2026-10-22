@@ -1,27 +1,59 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-import { Settings, ShieldAlert, Zap, Radio, Play, Pause } from 'lucide-react';
-import type { AppSettings, SpeedCamera, UserLocation, ProximityAlert } from './types';
+import { Settings, Plus, Minus, LocateFixed, Radio, Satellite, FlaskConical, TriangleAlert, Check } from 'lucide-react';
+import type { AppSettings, SpeedCamera, HazardReport, UserLocation, ProximityAlert, CameraType } from './types';
 import { generateNearbyCameras, generateInitialHazards, calculateDistanceMeters, formatDistance, formatSpeed } from './services/radarData';
 import { soundService } from './services/soundService';
 import { ReportModal } from './components/ReportModal';
 import { SettingsModal } from './components/SettingsModal';
 
-// Fix Leaflet marker icons
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-let DefaultIcon = L.icon({
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-  iconSize: [25, 41],
-  iconAnchor: [12, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
+// Shared surface style for floating map UI
+const panel = 'bg-[#141925]/90 backdrop-blur-md border border-white/[0.07] shadow-xl shadow-black/40';
+
+const CAMERA_LABELS: Record<CameraType, string> = {
+  fixed: 'Fixed camera',
+  mobile: 'Mobile radar',
+  red_light: 'Red light camera',
+  average_speed: 'Average speed zone',
+  tunnel: 'Tunnel camera',
+  traffic: 'Traffic camera'
+};
+
+const START = { lat: 40.7128, lng: -74.006 };
+
+const userIcon = L.divIcon({ className: 'map-marker', html: '<div class="user-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
+
+// Cache divIcons so markers don't get rebuilt on every location tick
+const iconCache = new Map<string, L.DivIcon>();
+function poiIcon(label: string, ring: string, fill = '#fff', text = '#111827'): L.DivIcon {
+  const key = `${label}|${ring}|${fill}`;
+  let icon = iconCache.get(key);
+  if (!icon) {
+    icon = L.divIcon({
+      className: 'map-marker',
+      html: `<div class="poi-dot" style="background:${fill};color:${text};box-shadow:0 0 0 2px ${ring},0 1px 4px rgba(0,0,0,.5)">${label}</div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+    iconCache.set(key, icon);
+  }
+  return icon;
+}
+
+function isCameraVisible(cam: SpeedCamera, s: AppSettings): boolean {
+  switch (cam.type) {
+    case 'mobile': return s.filterMobile;
+    case 'red_light': return s.filterRedLight;
+    case 'average_speed': return s.filterAverage;
+    default: return s.filterFixed;
+  }
+}
 
 const App: React.FC = () => {
-  const [location, setLocation] = useState<UserLocation>({ lat: 40.7128, lng: -74.006, speed: 0, heading: 0, accuracy: 10, altitude: 0 });
-  const [cameras, setCameras] = useState<SpeedCamera[]>([]);
+  const [location, setLocation] = useState<UserLocation>({ ...START, speed: 0, heading: 0, accuracy: 10, altitude: 0 });
+  const [cameras, setCameras] = useState<SpeedCamera[]>(() => generateNearbyCameras(START.lat, START.lng));
+  const [hazards, setHazards] = useState<HazardReport[]>(() => generateInitialHazards(START.lat, START.lng));
   const [settings, setSettings] = useState<AppSettings>({
     speedUnit: 'kmh',
     detectionRadius: 1000,
@@ -40,20 +72,18 @@ const App: React.FC = () => {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeAlerts, setActiveAlerts] = useState<ProximityAlert[]>([]);
+  const [map, setMap] = useState<L.Map | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Simulation mode toggle (default false so speed stays constant at 0 when not moving)
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Initialize data
-  useEffect(() => {
-    setCameras(generateNearbyCameras(location.lat, location.lng));
-    generateInitialHazards(location.lat, location.lng);
-  }, []);
+  const visibleCameras = useMemo(() => cameras.filter(c => isCameraVisible(c, settings)), [cameras, settings]);
 
   // Proximity alerts and Speed logic
   useEffect(() => {
     const alerts: ProximityAlert[] = [];
-    cameras.forEach(cam => {
+    visibleCameras.forEach(cam => {
       const dist = calculateDistanceMeters(location.lat, location.lng, cam.lat, cam.lng);
       if (dist < settings.detectionRadius) {
         const isOverSpeed = location.speed > cam.speedLimit;
@@ -71,8 +101,9 @@ const App: React.FC = () => {
         }
       }
     });
+    alerts.sort((a, b) => a.distance - b.distance);
     setActiveAlerts(alerts);
-  }, [location, cameras, settings]);
+  }, [location, visibleCameras, settings]);
 
   // Geolocation or Simulation movement
   useEffect(() => {
@@ -114,88 +145,196 @@ const App: React.FC = () => {
     }
   }, [isSimulating]);
 
-  return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col font-sans text-gray-200">
-      {/* Top Navbar */}
-      <div className="absolute top-0 left-0 right-0 z-40 bg-gray-900/90 backdrop-blur-lg border-b border-gray-800 p-3 flex justify-between items-center shadow-lg">
-        <div className="flex items-center space-x-2 text-indigo-400">
-          <Radio className="w-6 h-6 animate-pulse" />
-          <span className="font-bold text-lg tracking-tight text-white">Pulse<span className="text-indigo-400">Nav</span></span>
-        </div>
-        <div className="flex items-center space-x-3">
-           <button
-             onClick={() => setIsSimulating(!isSimulating)}
-             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
-               isSimulating ? 'bg-amber-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-             }`}
-             title="Toggle simulation mode for testing"
-           >
-             {isSimulating ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-             <span>{isSimulating ? 'Simulating' : 'Real GPS'}</span>
-           </button>
-           <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition">
-             <Settings className="w-5 h-5 text-gray-300" />
-           </button>
-        </div>
-      </div>
+  // Keep the map following the driver
+  useEffect(() => {
+    if (map && settings.autoCenterMap) map.panTo([location.lat, location.lng], { animate: true });
+  }, [map, location.lat, location.lng, settings.autoCenterMap]);
 
-      {/* Main Map */}
-      <MapContainer center={[location.lat, location.lng]} zoom={14} className="flex-grow">
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const speed = formatSpeed(location.speed, settings.speedUnit);
+  const nearest = activeAlerts[0];
+  const nearestLimit = nearest ? formatSpeed(nearest.camera.speedLimit, settings.speedUnit) : null;
+  const overLimit = nearest?.isOverSpeed ?? false;
+
+  return (
+    <div className="relative w-full h-full overflow-hidden font-sans text-gray-200">
+      {/* Map */}
+      <MapContainer
+        ref={setMap}
+        center={[location.lat, location.lng]}
+        zoom={15}
+        zoomControl={false}
+        className="absolute inset-0 z-0"
+      >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
-        {/* User */}
-        <Marker position={[location.lat, location.lng]}>
-          <Popup>Current Location (Speed: {Math.round(location.speed)} km/h)</Popup>
+        <Marker position={[location.lat, location.lng]} icon={userIcon} zIndexOffset={1000}>
+          <Popup>You are here · {speed.value} {speed.label}</Popup>
         </Marker>
-        {/* Cameras */}
-        {cameras.filter(c => (settings.filterFixed && c.type === 'fixed') || (settings.filterMobile && c.type === 'mobile')).map(cam => (
-          <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={L.divIcon({ className: 'bg-red-500 rounded-full w-4 h-4 border-2 border-white' })}>
+        {visibleCameras.map(cam => {
+          const limit = formatSpeed(cam.speedLimit, settings.speedUnit).value;
+          return (
+            <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={poiIcon(String(limit), cam.type === 'mobile' ? '#f97316' : '#ef4444')}>
+              <Popup>
+                <div className="font-semibold text-white">{CAMERA_LABELS[cam.type]}</div>
+                <div className="text-gray-400">{cam.roadName} · limit {limit} {settings.speedUnit === 'kmh' ? 'km/h' : 'mph'}</div>
+                {cam.isCommunityReport && <div className="text-xs text-gray-500 mt-1">Community report</div>}
+              </Popup>
+            </Marker>
+          );
+        })}
+        {settings.filterHazards && hazards.map(h => (
+          <Marker key={h.id} position={[h.lat, h.lng]} icon={poiIcon('!', '#0a0d14', '#f59e0b', '#111827')}>
             <Popup>
-               <div className="text-xs font-bold">{cam.name}</div>
-               <div className="text-gray-400">{cam.roadName}</div>
+              <div className="font-semibold text-white">{h.title}</div>
+              <div className="text-gray-400">{h.confirmations} confirmations</div>
             </Popup>
           </Marker>
         ))}
       </MapContainer>
 
-      {/* Speedometer Overlay */}
-      <div className="absolute bottom-6 left-6 right-6 z-40 flex flex-col items-center space-y-4">
-        {activeAlerts.length > 0 && (
-          <div className="w-full bg-red-900/90 border border-red-500/50 rounded-2xl p-4 flex items-center justify-between shadow-2xl animate-in slide-in-from-bottom">
-            <div className="flex items-center space-x-3">
-              <ShieldAlert className="w-8 h-8 text-red-100" />
-              <div>
-                <div className="text-sm font-bold text-red-50">Camera Ahead: {activeAlerts[0].camera.name}</div>
-                <div className="text-xs text-red-200">Distance: {formatDistance(activeAlerts[0].distance, settings.speedUnit)}</div>
+      {/* Top bar */}
+      <header className="absolute inset-x-0 top-0 z-40 flex items-center justify-between gap-3 p-3 sm:p-4 pt-[max(0.75rem,env(safe-area-inset-top))] pointer-events-none">
+        <div className={`${panel} pointer-events-auto flex items-center gap-2 rounded-xl px-3 h-11`}>
+          <Radio className="w-5 h-5 text-blue-400" />
+          <span className="font-bold tracking-tight text-white max-[380px]:hidden">Pulse<span className="text-blue-400">Nav</span></span>
+        </div>
+        <div className="pointer-events-auto flex items-center gap-2">
+          <div className={`${panel} flex rounded-xl p-1 h-11`} role="group" aria-label="Location source">
+            <button
+              onClick={() => setIsSimulating(false)}
+              aria-pressed={!isSimulating}
+              className={`flex items-center gap-1.5 px-3 rounded-lg text-xs font-semibold transition-colors ${!isSimulating ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+            >
+              <Satellite className="w-3.5 h-3.5" />
+              GPS
+            </button>
+            <button
+              onClick={() => setIsSimulating(true)}
+              aria-pressed={isSimulating}
+              title="Simulate driving at 60 km/h for testing"
+              className={`flex items-center gap-1.5 px-3 rounded-lg text-xs font-semibold transition-colors ${isSimulating ? 'bg-amber-500/20 text-amber-300' : 'text-gray-400 hover:text-white'}`}
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              Demo
+            </button>
+          </div>
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            aria-label="Settings"
+            className={`${panel} grid place-items-center w-11 h-11 rounded-xl text-gray-300 hover:text-white transition-colors`}
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      {/* Map controls */}
+      <div className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-2">
+        <div className={`${panel} flex flex-col rounded-xl overflow-hidden`}>
+          <button onClick={() => map?.zoomIn()} aria-label="Zoom in" className="grid place-items-center w-11 h-11 text-gray-300 hover:text-white hover:bg-white/5 transition-colors">
+            <Plus className="w-5 h-5" />
+          </button>
+          <div className="h-px bg-white/[0.07]" />
+          <button onClick={() => map?.zoomOut()} aria-label="Zoom out" className="grid place-items-center w-11 h-11 text-gray-300 hover:text-white hover:bg-white/5 transition-colors">
+            <Minus className="w-5 h-5" />
+          </button>
+        </div>
+        <button
+          onClick={() => map?.flyTo([location.lat, location.lng], Math.max(map.getZoom(), 15))}
+          aria-label="Center on my location"
+          className={`${panel} grid place-items-center w-11 h-11 rounded-xl text-blue-400 hover:text-blue-300 transition-colors`}
+        >
+          <LocateFixed className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Bottom dashboard */}
+      <div className="absolute inset-x-0 bottom-0 z-40 p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pointer-events-none">
+        <div className="mx-auto w-full max-w-md flex flex-col gap-2 pointer-events-auto">
+          {toast && (
+            <div className={`${panel} anim-rise self-center flex items-center gap-2 rounded-full px-4 py-2 text-sm text-white`}>
+              <Check className="w-4 h-4 text-emerald-400" />
+              {toast}
+            </div>
+          )}
+
+          {nearest && (
+            <div className={`anim-rise flex items-center gap-3 rounded-2xl px-4 py-3 border shadow-xl shadow-black/40 backdrop-blur-md ${overLimit ? 'bg-red-600/95 border-red-400/40' : 'bg-[#141925]/90 border-red-500/30'}`}>
+              <TriangleAlert className={`w-5 h-5 shrink-0 ${overLimit ? 'text-white' : 'text-red-400'}`} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-white truncate">{CAMERA_LABELS[nearest.camera.type]} ahead</div>
+                <div className={`text-xs truncate ${overLimit ? 'text-red-100' : 'text-gray-400'}`}>
+                  {formatDistance(nearest.distance, settings.speedUnit)} · {nearest.camera.roadName}
+                </div>
+              </div>
+              {overLimit && <span className="text-xs font-bold uppercase tracking-wide text-white">Slow down</span>}
+            </div>
+          )}
+
+          <div className={`${panel} flex items-center gap-4 rounded-2xl px-5 py-4`}>
+            <div className="flex-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Speed</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-5xl font-extrabold tabular-nums leading-none transition-colors ${overLimit ? 'text-red-400' : 'text-white'}`}>{speed.value}</span>
+                <span className="text-sm font-medium text-gray-400">{speed.label}</span>
               </div>
             </div>
-            <div className="text-2xl font-black text-white">{activeAlerts[0].camera.speedLimit} <span className="text-sm">km/h</span></div>
-          </div>
-        )}
 
-        <div className="w-full bg-gray-900/95 border border-gray-800 rounded-3xl p-6 flex justify-between items-center shadow-2xl backdrop-blur">
-          <div className="flex flex-col">
-            <span className="text-xs text-gray-500 uppercase tracking-widest font-bold">Speed</span>
-            <div className="text-6xl font-black text-white tabular-nums">{formatSpeed(location.speed, settings.speedUnit).value}</div>
-            <span className="text-sm font-semibold text-indigo-400">{formatSpeed(location.speed, settings.speedUnit).label}</span>
-          </div>
+            {nearestLimit && (
+              <div className="grid place-items-center w-14 h-14 rounded-full bg-white border-[5px] border-red-500 text-gray-900 text-lg font-extrabold tabular-nums" title="Speed limit">
+                {nearestLimit.value}
+              </div>
+            )}
 
-          <button
-             onClick={() => setIsReportOpen(true)}
-             className="p-5 bg-gradient-to-br from-indigo-600 to-purple-700 rounded-full shadow-lg shadow-indigo-600/30 hover:scale-105 transition"
-          >
-            <Zap className="w-8 h-8 text-white" />
-          </button>
+            <button
+              onClick={() => setIsReportOpen(true)}
+              aria-label="Report camera or hazard"
+              className="grid place-items-center w-14 h-14 rounded-full bg-blue-500 hover:bg-blue-400 active:scale-95 text-white shadow-lg shadow-blue-500/25 transition"
+            >
+              <Plus className="w-7 h-7" />
+            </button>
+          </div>
         </div>
       </div>
 
       <ReportModal
         isOpen={isReportOpen}
         onClose={() => setIsReportOpen(false)}
-        onReportCamera={(t, s, n) => console.log('Reported', t, s, n)}
-        onReportHazard={(t, title) => console.log('Reported', t, title)}
+        onReportCamera={(type, speedLimit, name) => {
+          setCameras(prev => [...prev, {
+            id: `user_${Date.now()}`,
+            lat: location.lat,
+            lng: location.lng,
+            type,
+            speedLimit,
+            name,
+            roadName: 'Reported by you',
+            verifiedCount: 1,
+            lastReported: 'just now',
+            isCommunityReport: true
+          }]);
+          setToast('Camera reported');
+        }}
+        onReportHazard={(type, title) => {
+          setHazards(prev => [...prev, {
+            id: `user_${Date.now()}`,
+            lat: location.lat,
+            lng: location.lng,
+            type,
+            title,
+            timestamp: Date.now(),
+            confirmations: 1
+          }]);
+          setToast('Hazard reported');
+        }}
         currentLat={location.lat}
         currentLng={location.lng}
       />
@@ -204,7 +343,7 @@ const App: React.FC = () => {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
-        onUpdateSettings={(newS) => setSettings({...settings, ...newS})}
+        onUpdateSettings={(newS) => setSettings(prev => ({ ...prev, ...newS }))}
       />
     </div>
   );

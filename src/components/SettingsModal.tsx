@@ -1,7 +1,9 @@
 import React from 'react';
 import type { AppSettings } from '../types';
 import { soundService } from '../services/soundService';
-import { Volume2, Eye, Bell, Shield, Sliders, X } from 'lucide-react';
+import { Volume2 } from 'lucide-react';
+import { Modal } from './Modal';
+import { choiceClass, primaryButton } from './styles';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -10,14 +12,51 @@ interface SettingsModalProps {
   onUpdateSettings: (newSettings: Partial<AppSettings>) => void;
 }
 
+type BooleanKey = {
+  [K in keyof AppSettings]: AppSettings[K] extends boolean ? K : never
+}[keyof AppSettings];
+
+const ALERT_TOGGLES: { key: BooleanKey; label: string; hint: string }[] = [
+  { key: 'soundAlerts', label: 'Alert sounds', hint: 'Chime when approaching a camera' },
+  { key: 'voiceAlerts', label: 'Voice alerts', hint: 'Spoken distance and speed limit' },
+  { key: 'overspeedBeep', label: 'Overspeed warning', hint: 'Beep when above the limit' },
+  { key: 'autoCenterMap', label: 'Follow location', hint: 'Keep the map centered on you' }
+];
+
+const FILTERS: { key: BooleanKey; label: string }[] = [
+  { key: 'filterFixed', label: 'Fixed cameras' },
+  { key: 'filterMobile', label: 'Mobile radar' },
+  { key: 'filterRedLight', label: 'Red light' },
+  { key: 'filterAverage', label: 'Average speed' },
+  { key: 'filterHazards', label: 'Road hazards' }
+];
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <section>
+    <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">{title}</h4>
+    {children}
+  </section>
+);
+
+const Toggle: React.FC<{ checked: boolean; onChange: () => void; label: string }> = ({ checked, onChange, label }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    onClick={onChange}
+    className={`relative w-11 h-6 shrink-0 rounded-full transition-colors ${checked ? 'bg-blue-500' : 'bg-white/15'}`}
+  >
+    <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
+  </button>
+);
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   settings,
   onUpdateSettings
 }) => {
-  if (!isOpen) return null;
-
   const testAudio = () => {
     soundService.playWarningBeep();
     setTimeout(() => {
@@ -26,184 +65,92 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl animate-in fade-in zoom-in duration-200">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 sticky top-0 bg-gray-900/90 backdrop-blur z-10">
-          <div className="flex items-center space-x-2">
-            <Sliders className="w-5 h-5 text-indigo-400" />
-            <h3 className="text-lg font-bold text-white">Radar & Navigation Settings</h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white transition p-1.5 rounded-lg hover:bg-gray-800"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-6">
-          {/* Audio & Alert Preferences */}
-          <div>
-            <h4 className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-3 flex items-center space-x-2">
-              <Bell className="w-4 h-4" />
-              <span>Alert Notifications</span>
-            </h4>
-            <div className="space-y-3 bg-gray-950/60 p-4 rounded-xl border border-gray-800/80">
-              <div className="flex items-center justify-between">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Settings"
+      footer={<button onClick={onClose} className={primaryButton}>Done</button>}
+    >
+      <div className="space-y-6">
+        <Section title="Alerts">
+          <div className="rounded-xl border border-white/[0.07] divide-y divide-white/[0.06]">
+            {ALERT_TOGGLES.map(item => (
+              <div key={item.key} className="flex items-center justify-between gap-4 px-4 py-3">
                 <div>
-                  <div className="text-sm font-medium text-white">Audio Chimes</div>
-                  <div className="text-xs text-gray-400">Play alert sounds when approaching radar cameras</div>
+                  <div className="text-sm font-medium text-white">{item.label}</div>
+                  <div className="text-xs text-gray-500">{item.hint}</div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onUpdateSettings({ soundAlerts: !settings.soundAlerts })}
-                  className={`w-12 h-6 flex items-center rounded-full p-1 transition duration-300 ${
-                    settings.soundAlerts ? 'bg-indigo-600 justify-end' : 'bg-gray-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md transform transition" />
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-white">Voice Speech Alerts</div>
-                  <div className="text-xs text-gray-400">Spoken voice warnings ("Fixed camera in 400m")</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onUpdateSettings({ voiceAlerts: !settings.voiceAlerts })}
-                  className={`w-12 h-6 flex items-center rounded-full p-1 transition duration-300 ${
-                    settings.voiceAlerts ? 'bg-indigo-600 justify-end' : 'bg-gray-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md transform transition" />
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-white">Overspeed Beep</div>
-                  <div className="text-xs text-gray-400">Pulsing warning when exceeding current road speed limit</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onUpdateSettings({ overspeedBeep: !settings.overspeedBeep })}
-                  className={`w-12 h-6 flex items-center rounded-full p-1 transition duration-300 ${
-                    settings.overspeedBeep ? 'bg-indigo-600 justify-end' : 'bg-gray-700 justify-start'
-                  }`}
-                >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-md transform transition" />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={testAudio}
-                className="w-full mt-2 py-2 px-3 bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-indigo-300 rounded-lg transition flex items-center justify-center space-x-2"
-              >
-                <Volume2 className="w-4 h-4" />
-                <span>Test Audio & Voice Alert Sample</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Units & Radius */}
-          <div>
-            <h4 className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-3 flex items-center space-x-2">
-              <Eye className="w-4 h-4" />
-              <span>Speed & Distance Measurement</span>
-            </h4>
-            <div className="space-y-4 bg-gray-950/60 p-4 rounded-xl border border-gray-800/80">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-white">Speed Unit</span>
-                <div className="flex bg-gray-800 rounded-lg p-1 border border-gray-700">
-                  <button
-                    onClick={() => onUpdateSettings({ speedUnit: 'kmh' })}
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition ${
-                      settings.speedUnit === 'kmh' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    km/h
-                  </button>
-                  <button
-                    onClick={() => onUpdateSettings({ speedUnit: 'mph' })}
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition ${
-                      settings.speedUnit === 'mph' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    mph
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-sm mb-1.5">
-                  <span className="font-medium text-white">Detection Warning Radius</span>
-                  <span className="text-indigo-400 font-bold">{settings.detectionRadius} meters</span>
-                </div>
-                <input
-                  type="range"
-                  min="300"
-                  max="2000"
-                  step="100"
-                  value={settings.detectionRadius}
-                  onChange={(e) => onUpdateSettings({ detectionRadius: Number(e.target.value) })}
-                  className="w-full accent-indigo-500 bg-gray-800 h-2 rounded-lg cursor-pointer"
+                <Toggle
+                  label={item.label}
+                  checked={settings[item.key]}
+                  onChange={() => onUpdateSettings({ [item.key]: !settings[item.key] })}
                 />
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>300m</span>
-                  <span>1000m</span>
-                  <span>2000m</span>
-                </div>
               </div>
-            </div>
+            ))}
+            <button
+              type="button"
+              onClick={testAudio}
+              className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-blue-400 hover:text-blue-300 hover:bg-white/[0.02] transition-colors"
+            >
+              <Volume2 className="w-4 h-4" />
+              Play test alert
+            </button>
           </div>
+        </Section>
 
-          {/* Camera Filter Toggles */}
-          <div>
-            <h4 className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-3 flex items-center space-x-2">
-              <Shield className="w-4 h-4" />
-              <span>Detection Filters</span>
-            </h4>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { key: 'filterFixed', label: 'Fixed Speed Cameras' },
-                { key: 'filterMobile', label: 'Mobile Radar Traps' },
-                { key: 'filterRedLight', label: 'Red Light Cameras' },
-                { key: 'filterAverage', label: 'Average Speed Zones' },
-                { key: 'filterHazards', label: 'Traffic & Road Hazards' }
-              ].map((item) => {
-                const active = (settings as any)[item.key];
-                return (
+        <Section title="Units & range">
+          <div className="rounded-xl border border-white/[0.07] divide-y divide-white/[0.06]">
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm font-medium text-white">Speed unit</span>
+              <div className="flex rounded-lg p-0.5 bg-white/[0.06]">
+                {(['kmh', 'mph'] as const).map(unit => (
                   <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => onUpdateSettings({ [item.key]: !active })}
-                    className={`py-2 px-3 rounded-xl border text-xs font-medium text-left flex items-center justify-between transition ${
-                      active
-                        ? 'border-indigo-500/70 bg-indigo-950/40 text-indigo-200'
-                        : 'border-gray-800 bg-gray-900/60 text-gray-500'
+                    key={unit}
+                    onClick={() => onUpdateSettings({ speedUnit: unit })}
+                    className={`px-3 h-7 text-xs font-semibold rounded-md transition-colors ${
+                      settings.speedUnit === unit ? 'bg-white/15 text-white' : 'text-gray-400 hover:text-white'
                     }`}
                   >
-                    <span>{item.label}</span>
-                    <span className={`w-2 h-2 rounded-full ${active ? 'bg-indigo-400' : 'bg-gray-700'}`} />
+                    {unit === 'kmh' ? 'km/h' : 'mph'}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+            </div>
+            <div className="px-4 py-3">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="font-medium text-white">Warning distance</span>
+                <span className="text-gray-400 tabular-nums">{settings.detectionRadius} m</span>
+              </div>
+              <input
+                type="range"
+                min="300"
+                max="2000"
+                step="100"
+                value={settings.detectionRadius}
+                onChange={(e) => onUpdateSettings({ detectionRadius: Number(e.target.value) })}
+                aria-label="Warning distance"
+                className="w-full accent-blue-500 cursor-pointer"
+              />
             </div>
           </div>
-        </div>
+        </Section>
 
-        <div className="px-6 py-4 bg-gray-950/60 border-t border-gray-800 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm rounded-xl transition shadow-lg shadow-indigo-600/30"
-          >
-            Save & Done
-          </button>
-        </div>
+        <Section title="Show on map">
+          <div className="flex flex-wrap gap-2">
+            {FILTERS.map(item => (
+              <button
+                key={item.key}
+                type="button"
+                aria-pressed={settings[item.key]}
+                onClick={() => onUpdateSettings({ [item.key]: !settings[item.key] })}
+                className={`${choiceClass(settings[item.key])} rounded-full px-3.5`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </Section>
       </div>
-    </div>
+    </Modal>
   );
 };
