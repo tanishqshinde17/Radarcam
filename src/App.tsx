@@ -221,7 +221,14 @@ const App: React.FC = () => {
 
   // Keep the map following the driver
   useEffect(() => {
-    if (map && settings.autoCenterMap) map.panTo([location.lat, location.lng], { animate: true, duration: 0.8, easeLinearity: 0.5 });
+    if (!map || !settings.autoCenterMap) return;
+    const center = map.getCenter();
+    // Jump on big moves (like the first GPS fix); a long animated pan can be cut off midway
+    if (calculateDistanceMeters(center.lat, center.lng, location.lat, location.lng) > 5_000) {
+      map.setView([location.lat, location.lng], map.getZoom(), { animate: false });
+    } else {
+      map.panTo([location.lat, location.lng], { animate: true, duration: 0.8, easeLinearity: 0.5 });
+    }
   }, [map, location.lat, location.lng, settings.autoCenterMap]);
 
   const showToast = (text: string) => {
