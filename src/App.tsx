@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-import { Settings, Plus, Minus, LocateFixed, Radio, Satellite, FlaskConical, TriangleAlert, Check } from 'lucide-react';
+import { Settings, Plus, Minus, LocateFixed, Radio, Satellite, FlaskConical, TriangleAlert, Check, LoaderCircle } from 'lucide-react';
 import type { AppSettings, SpeedCamera, HazardReport, UserLocation, ProximityAlert, CameraType } from './types';
-import { generateNearbyCameras, generateInitialHazards, calculateDistanceMeters, formatDistance, formatSpeed } from './services/radarData';
+import { calculateDistanceMeters, formatDistance, formatSpeed } from './services/radarData';
+import { loadCamerasAround, RELOAD_DISTANCE_M } from './services/cameraTiles';
 import { soundService } from './services/soundService';
 import { ReportModal } from './components/ReportModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -23,6 +24,13 @@ const CAMERA_LABELS: Record<CameraType, string> = {
 };
 
 const START = { lat: 40.7128, lng: -74.006 };
+
+// Markers are only drawn for cameras in view, and only when zoomed in enough to read them
+const MIN_MARKER_ZOOM = 10;
+const MAX_MARKERS = 500;
+const RETRY_AFTER_MS = 15_000;
+
+type CameraStatus = { state: 'loading' | 'ready' | 'error'; count: number };
 
 const userIcon = L.divIcon({ className: 'map-marker', html: '<div class="user-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
 
@@ -54,8 +62,15 @@ function isCameraVisible(cam: SpeedCamera, s: AppSettings): boolean {
 
 const App: React.FC = () => {
   const [location, setLocation] = useState<UserLocation>({ ...START, speed: 0, heading: 0, accuracy: 10, altitude: 0 });
-  const [cameras, setCameras] = useState<SpeedCamera[]>(() => generateNearbyCameras(START.lat, START.lng));
-  const [hazards, setHazards] = useState<HazardReport[]>(() => generateInitialHazards(START.lat, START.lng));
+  const [osmCameras, setOsmCameras] = useState<SpeedCamera[]>([]);
+  const [reportedCameras, setReportedCameras] = useState<SpeedCamera[]>([]);
+  const [hazards, setHazards] = useState<HazardReport[]>([]);
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>({ state: 'loading', count: 0 });
+  const [view, setView] = useState<{ bounds: L.LatLngBounds; zoom: number } | null>(null);
+  const loadCenter = useRef<{ lat: number; lng: number } | null>(null);
+  const lastError = useRef(0);
+  // Bumped after a failed load so it retries even while the driver is standing still
+  const [retryTick, setRetryTick] = useState(0);
   const [settings, setSettings] = useState<AppSettings>({
     speedUnit: 'kmh',
     detectionRadius: 1000,
@@ -82,7 +97,56 @@ const App: React.FC = () => {
   // Simulation mode toggle (default false so speed stays constant at 0 when not moving)
   const [isSimulating, setIsSimulating] = useState(false);
 
+  const cameras = useMemo(() => [...osmCameras, ...reportedCameras], [osmCameras, reportedCameras]);
   const visibleCameras = useMemo(() => cameras.filter(c => isCameraVisible(c, settings)), [cameras, settings]);
+
+  // Load real cameras within 200 km, and again whenever the driver moves far enough away
+  useEffect(() => {
+    const here = { lat: location.lat, lng: location.lng };
+    const last = loadCenter.current;
+    if (last && calculateDistanceMeters(last.lat, last.lng, here.lat, here.lng) < RELOAD_DISTANCE_M) return;
+    if (Date.now() - lastError.current < RETRY_AFTER_MS) return;
+
+    loadCenter.current = here;
+    setCameraStatus(prev => ({ ...prev, state: 'loading' }));
+    loadCamerasAround(here.lat, here.lng)
+      .then(found => {
+        if (loadCenter.current !== here) return; // a newer load superseded this one
+        setOsmCameras(found);
+        setCameraStatus({ state: 'ready', count: found.length });
+      })
+      .catch(err => {
+        console.warn('Could not load speed cameras:', err);
+        if (loadCenter.current !== here) return;
+        loadCenter.current = last;
+        lastError.current = Date.now();
+        setCameraStatus(prev => ({ ...prev, state: 'error' }));
+        setTimeout(() => setRetryTick(t => t + 1), RETRY_AFTER_MS + 250);
+      });
+  }, [location.lat, location.lng, retryTick]);
+
+  // Track the visible map area so only on-screen cameras get markers
+  useEffect(() => {
+    if (!map) return;
+    const update = () => setView({ bounds: map.getBounds().pad(0.2), zoom: map.getZoom() });
+    update();
+    map.on('moveend', update);
+    return () => {
+      map.off('moveend', update);
+    };
+  }, [map]);
+
+  const markerCameras = useMemo(() => {
+    if (!view || view.zoom < MIN_MARKER_ZOOM) return [];
+    const center = view.bounds.getCenter();
+    const inView = visibleCameras.filter(c => view.bounds.contains([c.lat, c.lng]));
+    if (inView.length <= MAX_MARKERS) return inView;
+    return inView
+      .map(c => ({ c, d: calculateDistanceMeters(center.lat, center.lng, c.lat, c.lng) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, MAX_MARKERS)
+      .map(x => x.c);
+  }, [view, visibleCameras]);
 
   // Proximity alerts and Speed logic
   useEffect(() => {
@@ -90,24 +154,29 @@ const App: React.FC = () => {
     visibleCameras.forEach(cam => {
       const dist = calculateDistanceMeters(location.lat, location.lng, cam.lat, cam.lng);
       if (dist < settings.detectionRadius) {
-        const isOverSpeed = location.speed > cam.speedLimit;
+        const isOverSpeed = cam.speedLimit > 0 && location.speed > cam.speedLimit;
         alerts.push({ camera: cam, distance: dist, isOverSpeed });
-
-        // Alert sound triggers
-        if (settings.soundAlerts && dist < settings.detectionRadius * 0.5) {
-          if (isOverSpeed && settings.overspeedBeep) soundService.playOverspeedAlarm();
-          else soundService.playWarningBeep();
-        }
-
-        // Voice triggers
-        if (settings.voiceAlerts && dist < 400 && dist > 300) {
-          soundService.speak(`Speed camera ahead in ${Math.round(dist)} meters. Speed limit ${cam.speedLimit} ${settings.speedUnit === 'kmh' ? 'kilometers per hour' : 'miles per hour'}.`);
-        }
       }
     });
     alerts.sort((a, b) => a.distance - b.distance);
     setActiveAlerts(alerts);
     if (alerts.length) setLastAlert(alerts[0]);
+
+    // Only the nearest camera makes sound, so a cluster doesn't stack beeps
+    const first = alerts[0];
+    if (!first) return;
+    if (settings.soundAlerts && first.distance < settings.detectionRadius * 0.5) {
+      if (first.isOverSpeed && settings.overspeedBeep) soundService.playOverspeedAlarm();
+      else soundService.playWarningBeep();
+    }
+    if (settings.voiceAlerts && first.distance < 400 && first.distance > 300) {
+      const metric = settings.speedUnit === 'kmh';
+      const distance = metric ? `${Math.round(first.distance)} meters` : `${Math.round(first.distance * 3.28084)} feet`;
+      const limit = first.camera.speedLimit > 0
+        ? ` Speed limit ${formatSpeed(first.camera.speedLimit, settings.speedUnit).value} ${metric ? 'kilometers per hour' : 'miles per hour'}.`
+        : '';
+      soundService.speak(`${first.camera.name} ahead in ${distance}.${limit}`);
+    }
   }, [location, visibleCameras, settings]);
 
   // Geolocation or Simulation movement
@@ -168,15 +237,16 @@ const App: React.FC = () => {
 
   const speed = formatSpeed(location.speed, settings.speedUnit);
   const nearest = activeAlerts[0];
-  const nearestLimit = nearest ? formatSpeed(nearest.camera.speedLimit, settings.speedUnit) : null;
+  const nearestLimit = nearest?.camera.speedLimit ? formatSpeed(nearest.camera.speedLimit, settings.speedUnit) : null;
   const overLimit = nearest?.isOverSpeed ?? false;
 
   // Fall back to the last alert so its content stays put while the card animates out
   const shownAlert = nearest ?? lastAlert;
-  const shownLimit = shownAlert ? formatSpeed(shownAlert.camera.speedLimit, settings.speedUnit) : nearestLimit;
+  const shownLimit = shownAlert?.camera.speedLimit ? formatSpeed(shownAlert.camera.speedLimit, settings.speedUnit) : nearestLimit;
+  const unitLabel = settings.speedUnit === 'kmh' ? 'km/h' : 'mph';
 
   const alertCard = usePresence(!!nearest, 250);
-  const limitSign = usePresence(!!nearest, 200);
+  const limitSign = usePresence(!!nearestLimit, 200);
   const toastPresence = usePresence(toastOpen, 400);
 
   return (
@@ -196,14 +266,14 @@ const App: React.FC = () => {
         <Marker position={[location.lat, location.lng]} icon={userIcon} zIndexOffset={1000}>
           <Popup>You are here · {speed.value} {speed.label}</Popup>
         </Marker>
-        {visibleCameras.map(cam => {
-          const limit = formatSpeed(cam.speedLimit, settings.speedUnit).value;
+        {markerCameras.map(cam => {
+          const limit = cam.speedLimit > 0 ? formatSpeed(cam.speedLimit, settings.speedUnit).value : 0;
           return (
-            <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={poiIcon(String(limit), cam.type === 'mobile' ? '#f97316' : '#ef4444')}>
+            <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={poiIcon(limit ? String(limit) : '', cam.type === 'mobile' ? '#f97316' : '#ef4444')}>
               <Popup>
                 <div className="font-semibold text-white">{CAMERA_LABELS[cam.type]}</div>
-                <div className="text-gray-400">{cam.roadName} · limit {limit} {settings.speedUnit === 'kmh' ? 'km/h' : 'mph'}</div>
-                {cam.isCommunityReport && <div className="text-xs text-gray-500 mt-1">Community report</div>}
+                <div className="text-gray-400">{limit ? `Limit ${limit} ${unitLabel}` : 'Speed limit not recorded'}</div>
+                <div className="text-xs text-gray-500 mt-1">{cam.isCommunityReport ? 'Reported by you' : 'Source: OpenStreetMap'}</div>
               </Popup>
             </Marker>
           );
@@ -222,7 +292,7 @@ const App: React.FC = () => {
       <header className="absolute inset-x-0 top-0 z-40 flex items-center justify-between gap-3 p-3 sm:p-4 pt-[max(0.75rem,env(safe-area-inset-top))] pointer-events-none">
         <div className={`${panel} enter-down pointer-events-auto flex items-center gap-2 rounded-xl px-3 h-11`}>
           <Radio className="w-5 h-5 text-blue-400" />
-          <span className="font-bold tracking-tight text-white max-[380px]:hidden">Pulse<span className="text-blue-400">Nav</span></span>
+          <span className="font-bold tracking-tight text-white max-[380px]:hidden">Radar<span className="text-blue-400">cam</span></span>
         </div>
         <div className="enter-down pointer-events-auto flex items-center gap-2" style={{ '--delay': '60ms' } as React.CSSProperties}>
           <Segmented
@@ -249,6 +319,23 @@ const App: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Camera data status */}
+      <div
+        className="enter-down absolute left-3 sm:left-4 top-[calc(max(0.75rem,env(safe-area-inset-top))+3.25rem)] sm:top-[calc(max(1rem,env(safe-area-inset-top))+3.25rem)] z-30 pointer-events-none"
+        style={{ '--delay': '90ms' } as React.CSSProperties}
+      >
+        <div role="status" className={`${panel} flex items-center gap-1.5 rounded-lg px-2.5 h-7 text-[11px] font-medium text-gray-400`}>
+          {cameraStatus.state === 'loading' && <><LoaderCircle className="w-3.5 h-3.5 animate-spin text-blue-400" />Loading cameras…</>}
+          {cameraStatus.state === 'error' && <span className="text-amber-300">Camera servers busy · retrying</span>}
+          {cameraStatus.state === 'ready' && (
+            <span>
+              {cameraStatus.count.toLocaleString()} cameras within 200 km
+              {view && view.zoom < MIN_MARKER_ZOOM && cameraStatus.count > 0 && ' · zoom in to see them'}
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* Map controls */}
       <div className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-30">
@@ -295,7 +382,8 @@ const App: React.FC = () => {
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-white truncate">{CAMERA_LABELS[shownAlert.camera.type]} ahead</div>
                 <div className={`text-xs truncate tabular-nums transition-colors duration-200 ${overLimit ? 'text-red-100' : 'text-gray-400'}`}>
-                  {formatDistance(shownAlert.distance, settings.speedUnit)} · {shownAlert.camera.roadName}
+                  {formatDistance(shownAlert.distance, settings.speedUnit)}
+                  {shownAlert.camera.speedLimit > 0 ? ` · limit ${formatSpeed(shownAlert.camera.speedLimit, settings.speedUnit).value} ${unitLabel}` : ''}
                 </div>
               </div>
               <span
@@ -342,7 +430,7 @@ const App: React.FC = () => {
         isOpen={isReportOpen}
         onClose={() => setIsReportOpen(false)}
         onReportCamera={(type, speedLimit, name) => {
-          setCameras(prev => [...prev, {
+          setReportedCameras(prev => [...prev, {
             id: `user_${Date.now()}`,
             lat: location.lat,
             lng: location.lng,

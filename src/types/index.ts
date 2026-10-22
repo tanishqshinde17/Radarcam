@@ -19,7 +19,7 @@ export interface SpeedCamera {
   lat: number;
   lng: number;
   type: CameraType;
-  speedLimit: number; // in km/h
+  speedLimit: number; // in km/h, 0 when unknown
   direction?: number; // 0-360 degrees
   name: string;
   roadName: string;
