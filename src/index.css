@@ -37,9 +37,9 @@ body {
   font-family: inherit;
 }
 
-/* Dark mode for OpenStreetMap tiles without requiring API keys */
+/* Minimalist dark basemap from free OSM tiles: invert to dark, desaturate, soften contrast */
 .leaflet-tile-pane {
-  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.35);
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.88) saturate(0.3);
 }
 
 .leaflet-control-attribution {
@@ -109,16 +109,45 @@ body {
   }
 }
 
-.poi-dot {
+/* Camera badge: white disc + colored ring, like a real speed-limit sign */
+.cam-badge {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 9999px;
+  background: #ffffff;
+  border: 3px solid var(--cam-ring, #3b82f6);
+  color: #0a0d14;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* Unknown-limit cameras: neutral dot, no number */
+.cam-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--cam-ring, #3b82f6);
   border: 2px solid #0a0d14;
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Hazard marker stays amber so it never reads as a speed camera */
+.hazard-dot {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #f59e0b;
+  border: 2px solid #0a0d14;
+  color: #1c1200;
+  font-size: 11px;
+  font-weight: 800;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { Settings, Plus, Minus, LocateFixed, Radio, Satellite, FlaskConical, TriangleAlert, Check, LoaderCircle } from 'lucide-react';
+import { Settings, Plus, Minus, LocateFixed, Radio, Satellite, FlaskConical, TriangleAlert, Check, LoaderCircle, Navigation } from 'lucide-react';
 import type { AppSettings, SpeedCamera, HazardReport, UserLocation, ProximityAlert, CameraType } from './types';
 import { calculateDistanceMeters, formatDistance, formatSpeed } from './services/radarData';
 import { loadCamerasAround, RELOAD_DISTANCE_M } from './services/cameraTiles';
@@ -10,6 +10,10 @@ import { ReportModal } from './components/ReportModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Segmented } from './components/Segmented';
 import { usePresence } from './hooks/usePresence';
+import { useLiveNavigation } from './hooks/useLiveNavigation';
+import { DestinationSearch } from './components/DestinationSearch';
+import { GuidanceHUD } from './components/GuidanceHUD';
+import { fetchRoutes, type RouteOption } from './services/googleRouting';
 
 // Shared surface style for floating map UI
 const panel = 'bg-[#141925]/90 backdrop-blur-md border border-white/[0.07] shadow-xl shadow-black/40';
@@ -34,19 +38,34 @@ type CameraStatus = { state: 'loading' | 'ready' | 'error'; count: number };
 
 const userIcon = L.divIcon({ className: 'map-marker', html: '<div class="user-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
 
+// Semantic colors: Blue = at/below the limit, Red = above the limit
+const BLUE = '#3b82f6';
+const RED = '#ef4444';
+
 // Cache divIcons so markers don't get rebuilt on every location tick
 const iconCache = new Map<string, L.DivIcon>();
-function poiIcon(label: string, ring: string, fill = '#fff', text = '#111827'): L.DivIcon {
-  const key = `${label}|${ring}|${fill}`;
+
+// Camera badge. `over` means the driver is currently above this camera's limit -> red ring.
+function camIcon(limit: number, over: boolean): L.DivIcon {
+  const ring = over ? RED : BLUE;
+  const key = `cam|${limit}|${over}`;
   let icon = iconCache.get(key);
   if (!icon) {
-    icon = L.divIcon({
-      className: 'map-marker',
-      html: `<div class="poi-dot" style="background:${fill};color:${text};box-shadow:0 0 0 2px ${ring},0 1px 4px rgba(0,0,0,.5)">${label}</div>`,
-      iconSize: [22, 22],
-      iconAnchor: [11, 11]
-    });
+    const html = limit > 0
+      ? `<div class="cam-badge" style="--cam-ring:${ring}">${limit}</div>`
+      : `<div class="cam-dot" style="--cam-ring:${ring}"></div>`;
+    const size = limit > 0 ? 24 : 12;
+    icon = L.divIcon({ className: 'map-marker', html, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
     iconCache.set(key, icon);
+  }
+  return icon;
+}
+
+function hazardIcon(): L.DivIcon {
+  let icon = iconCache.get('hazard');
+  if (!icon) {
+    icon = L.divIcon({ className: 'map-marker', html: '<div class="hazard-dot">!</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
+    iconCache.set('hazard', icon);
   }
   return icon;
 }
@@ -93,6 +112,33 @@ const App: React.FC = () => {
   const [map, setMap] = useState<L.Map | null>(null);
   const [toast, setToast] = useState<{ text: string; id: number }>({ text: '', id: 0 });
   const [toastOpen, setToastOpen] = useState(false);
+
+  // Navigation & routing state
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [routes, setRoutes] = useState<RouteOption[]>([]);
+  const [selectedRouteId, setSelectedRouteId] = useState<string>('fastest');
+  const [isNavigating, setIsNavigating] = useState(false);
+
+  // Active route derived from the selected option
+  const activeRoute = useMemo(() => routes.find(r => r.id === selectedRouteId), [routes, selectedRouteId]);
+
+  // Live Navigation Simulation along the route polyline
+  useLiveNavigation(activeRoute, location, isNavigating, setLocation);
+
+  const handleSearchDestination = async (query: string) => {
+    setIsSearchOpen(false);
+    showToast('Calculating routes…');
+    try {
+      const found = await fetchRoutes({ lat: location.lat, lng: location.lng }, query, cameras);
+      setRoutes(found);
+      setSelectedRouteId(found[0]?.id || 'fastest');
+      setIsNavigating(true);
+      showToast(`Found ${found.length} route options`);
+    } catch (err) {
+      console.error(err);
+      showToast('Could not find destination');
+    }
+  };
 
   // Simulation mode toggle (default false so speed stays constant at 0 when not moving)
   const [isSimulating, setIsSimulating] = useState(false);
@@ -219,6 +265,13 @@ const App: React.FC = () => {
     }
   }, [isSimulating]);
 
+  // Force re-render of map tiles if they go missing
+  useEffect(() => {
+    if (!map) return;
+    const timer = setTimeout(() => map.invalidateSize(), 500);
+    return () => clearTimeout(timer);
+  }, [map]);
+
   // Keep the map following the driver
   useEffect(() => {
     if (!map || !settings.autoCenterMap) return;
@@ -275,8 +328,9 @@ const App: React.FC = () => {
         </Marker>
         {markerCameras.map(cam => {
           const limit = cam.speedLimit > 0 ? formatSpeed(cam.speedLimit, settings.speedUnit).value : 0;
+          const over = cam.speedLimit > 0 && location.speed > cam.speedLimit;
           return (
-            <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={poiIcon(limit ? String(limit) : '', cam.type === 'mobile' ? '#f97316' : '#ef4444')}>
+            <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={camIcon(limit, over)}>
               <Popup>
                 <div className="font-semibold text-white">{CAMERA_LABELS[cam.type]}</div>
                 <div className="text-gray-400">{limit ? `Limit ${limit} ${unitLabel}` : 'Speed limit not recorded'}</div>
@@ -286,14 +340,28 @@ const App: React.FC = () => {
           );
         })}
         {settings.filterHazards && hazards.map(h => (
-          <Marker key={h.id} position={[h.lat, h.lng]} icon={poiIcon('!', '#0a0d14', '#f59e0b', '#111827')}>
+          <Marker key={h.id} position={[h.lat, h.lng]} icon={hazardIcon()}>
             <Popup>
               <div className="font-semibold text-white">{h.title}</div>
               <div className="text-gray-400">{h.confirmations} confirmations</div>
             </Popup>
           </Marker>
         ))}
+
+        {isNavigating && activeRoute && (
+          <Polyline positions={activeRoute.coordinates} color="#3b82f6" weight={5} opacity={0.7} />
+        )}
       </MapContainer>
+
+      {isSearchOpen && <DestinationSearch onSearch={handleSearchDestination} onClose={() => setIsSearchOpen(false)} />}
+      {isNavigating && activeRoute && (
+        <GuidanceHUD
+          routes={routes}
+          selectedRouteId={selectedRouteId}
+          onSelectRoute={setSelectedRouteId}
+          onCancel={() => setIsNavigating(false)}
+        />
+      )}
 
       {/* Top bar */}
       <header className="absolute inset-x-0 top-0 z-40 flex items-center justify-between gap-3 p-3 sm:p-4 pt-[max(0.75rem,env(safe-area-inset-top))] pointer-events-none">
@@ -317,6 +385,13 @@ const App: React.FC = () => {
               { value: 'demo', label: <><FlaskConical className="w-3.5 h-3.5" />Demo</> }
             ]}
           />
+          <button
+            onClick={() => setIsSearchOpen(true)}
+            aria-label="Search destination"
+            className={`${panel} press grid place-items-center w-11 h-11 rounded-xl text-blue-400 hover:text-blue-300`}
+          >
+            <Navigation className="w-5 h-5" />
+          </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             aria-label="Settings"
@@ -383,19 +458,19 @@ const App: React.FC = () => {
             <div
               data-state={alertCard.state}
               role="alert"
-              className={`slide-up flex items-center gap-3 rounded-2xl px-4 py-3 border shadow-xl shadow-black/40 backdrop-blur-md ${overLimit ? 'bg-red-600/95 border-red-400/40' : 'bg-[#141925]/90 border-red-500/30'}`}
+              className={`slide-up flex items-center gap-3 rounded-2xl px-4 py-3 border shadow-xl shadow-black/40 backdrop-blur-md ${overLimit ? 'bg-red-500/15 border-red-500/40' : 'bg-blue-500/10 border-blue-500/30'}`}
             >
-              <TriangleAlert className={`w-5 h-5 shrink-0 transition-colors duration-200 ${overLimit ? 'text-white' : 'text-red-400'}`} />
+              <TriangleAlert className={`w-5 h-5 shrink-0 transition-colors duration-200 ${overLimit ? 'text-red-400' : 'text-blue-400'}`} />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-white truncate">{CAMERA_LABELS[shownAlert.camera.type]} ahead</div>
-                <div className={`text-xs truncate tabular-nums transition-colors duration-200 ${overLimit ? 'text-red-100' : 'text-gray-400'}`}>
+                <div className={`text-xs truncate tabular-nums transition-colors duration-200 ${overLimit ? 'text-red-300' : 'text-blue-300'}`}>
                   {formatDistance(shownAlert.distance, settings.speedUnit)}
                   {shownAlert.camera.speedLimit > 0 ? ` · limit ${formatSpeed(shownAlert.camera.speedLimit, settings.speedUnit).value} ${unitLabel}` : ''}
                 </div>
               </div>
               <span
                 data-state={overLimit ? 'open' : 'closed'}
-                className="pop text-xs font-bold uppercase tracking-wide text-white"
+                className="pop text-xs font-bold uppercase tracking-wide text-red-400"
                 aria-hidden={!overLimit}
               >
                 Slow down
@@ -407,7 +482,7 @@ const App: React.FC = () => {
             <div className="flex-1">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Speed</div>
               <div className="flex items-baseline gap-1.5">
-                <span className={`text-5xl font-extrabold tabular-nums leading-none transition-colors duration-200 ${overLimit ? 'text-red-400' : 'text-white'}`}>{speed.value}</span>
+                <span className={`text-5xl font-extrabold tabular-nums leading-none transition-colors duration-200 ${overLimit ? 'text-red-500' : 'text-blue-400'}`}>{speed.value}</span>
                 <span className="text-sm font-medium text-gray-400">{speed.label}</span>
               </div>
             </div>
@@ -415,7 +490,7 @@ const App: React.FC = () => {
             {limitSign.mounted && shownLimit && (
               <div
                 data-state={limitSign.state}
-                className="pop grid place-items-center w-14 h-14 rounded-full bg-white border-[5px] border-red-500 text-gray-900 text-lg font-extrabold tabular-nums"
+                className={`pop grid place-items-center w-14 h-14 rounded-full bg-white border-[5px] text-gray-900 text-lg font-extrabold tabular-nums transition-colors duration-200 ${overLimit ? 'border-red-500' : 'border-blue-500'}`}
                 title="Speed limit"
               >
                 {shownLimit.value}
